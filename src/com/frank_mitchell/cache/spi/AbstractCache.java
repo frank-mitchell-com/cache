@@ -27,7 +27,9 @@ package com.frank_mitchell.cache.spi;
 import com.frank_mitchell.cache.Cache;
 import com.frank_mitchell.cache.CacheParameters;
 import com.frank_mitchell.cache.CacheView;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 
 /**
  * Abstract class for most {@link Cache} implementations.
@@ -44,6 +46,8 @@ public abstract class AbstractCache<K,V>
     protected Duration _lastAccessLimit = Duration.ofMillis(Long.MAX_VALUE);
     protected Duration _lastUpdateLimit = Duration.ofMillis(Long.MAX_VALUE);
     protected int _maxSize = Integer.MAX_VALUE;
+    
+    protected abstract Clock getClock();
     
     @Override
     public boolean isLastAccessedDroppedFirst() {
@@ -142,6 +146,10 @@ public abstract class AbstractCache<K,V>
      */
     protected abstract V rawput(K key, V value);
     
+    protected abstract void entryAccessed(CacheEntry<K, V> cache, Instant old);
+    
+    protected abstract void entryUpdated(CacheEntry<K, V> cache, Instant old);
+    
     @Override
     public String toString() {
         StringBuilder result = new StringBuilder();
@@ -152,7 +160,7 @@ public abstract class AbstractCache<K,V>
             result.append(v.getKey()).append("=")
                     .append("(access=").append(v.getAccess())
                     .append(",update=").append(v.getUpdate())
-                    .append(",value=").append(v.getValueSnapshot())
+                    .append(",value=").append(v.getValue())
                     .append("),");
         }
         result.append("}");

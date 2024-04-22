@@ -23,27 +23,26 @@
  */
 package com.frank_mitchell.cache.spi;
 
-import com.frank_mitchell.cache.CacheEntry;
 import java.time.Clock;
 import java.time.Instant;
 
 /**
- * A {@link CacheEntry} implementation.
+ * A container for the cache entry key, value, and access and update timestamps.
  * 
  * @author Frank Mitchell
  * @param <K> key type
  * @param <V> value type
  */
-public final class DefaultEntry<K, V> implements CacheEntry<K,V> {
+public final class CacheEntry<K, V> {
     
-    private final DefaultCache<K,V> _cache;
+    private final AbstractCache<K,V> _cache;
     private final K _key;
     
     private V _value;
     private Instant _access;
     private Instant _update;
 
-    DefaultEntry(DefaultCache<K,V> cache, K key, V value) {
+    CacheEntry(AbstractCache<K,V> cache, K key, V value) {
         final Instant now = cache.getClock().instant();
         _key = key;
         _value = value;
@@ -52,13 +51,11 @@ public final class DefaultEntry<K, V> implements CacheEntry<K,V> {
         _update = now;
     }
 
-    @Override
     public K getKey() {
         return _key;
     }
 
-    @Override
-    public V getValue() {
+    public V getValueWithAccess() {
         V result;
         Instant oldtime;
         synchronized (this) {
@@ -70,14 +67,12 @@ public final class DefaultEntry<K, V> implements CacheEntry<K,V> {
         return result;
     }
     
-    @Override
-    public V getValueSnapshot() {
+    public V getValueNoAccess() {
         synchronized (this) {
             return _value;
         }
     }
 
-    @Override
     public V setValue(V v) {
         V oldvalue;
         Instant oldtime;
@@ -91,14 +86,12 @@ public final class DefaultEntry<K, V> implements CacheEntry<K,V> {
         return oldvalue;
     }
 
-    @Override
     public Instant getAccess() {
         synchronized (this) {
             return _access;
         }
     }
 
-    @Override
     public Instant getUpdate() {
         synchronized (this) {
             return _update;

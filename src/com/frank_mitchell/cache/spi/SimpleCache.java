@@ -24,7 +24,6 @@
 package com.frank_mitchell.cache.spi;
 
 import com.frank_mitchell.cache.Cache;
-import com.frank_mitchell.cache.CacheEntry;
 import com.frank_mitchell.cache.CacheView;
 import java.time.Clock;
 import java.time.Instant;
@@ -51,7 +50,7 @@ import java.util.TreeMap;
  * @param <V> type of values in the cache
  */
 public class SimpleCache<K, V> extends AbstractCache<K, V> {
-    private final Map<K, SimpleCacheEntry<K, V>> _cache = new HashMap<>();
+    private final Map<K, CacheEntry<K, V>> _cache = new HashMap<>();
     private final Clock _clock;
 
     /**
@@ -61,6 +60,11 @@ public class SimpleCache<K, V> extends AbstractCache<K, V> {
         this(Clock.systemUTC());
     }
 
+    @Override
+    protected Clock getClock() {
+        return _clock;
+    }
+    
     /**
      * Debug constructor for a (mock) Clock.
      * 
@@ -93,28 +97,20 @@ public class SimpleCache<K, V> extends AbstractCache<K, V> {
     }
 
     @Override
-    @SuppressWarnings("element-type-mismatch")
-    public CacheEntry<K, V> getEntry(Object o) {
-        synchronized (this) {
-            return _cache.get(o);
-        }
-    }
-
-    @Override
     public V get(Object key) {
         V result = null;
         synchronized (this) {
             clearExpired();
-            SimpleCacheEntry<K, V> e = rawget(key);
+            CacheEntry<K, V> e = rawget(key);
             if (e != null) {
-                result = e.getValue();
+                result = e.getValueWithAccess();
             }
         }
         return result;
     }
 
     @SuppressWarnings("element-type-mismatch")
-    private SimpleCacheEntry<K, V> rawget(Object key) {
+    private CacheEntry<K, V> rawget(Object key) {
         return _cache.get(key);
     }
 
@@ -122,9 +118,9 @@ public class SimpleCache<K, V> extends AbstractCache<K, V> {
     protected V rawput(K key, V value) {
         V result = null;
         synchronized (this) {
-            SimpleCacheEntry<K, V> e = _cache.get(key);
+            CacheEntry<K, V> e = _cache.get(key);
             if (e == null) {
-                _cache.put(key, new SimpleCacheEntry<>(key, value));
+                _cache.put(key, new CacheEntry<>(this, key, value));
             } else {
                 result = e.setValue(value);
             }
@@ -135,16 +131,16 @@ public class SimpleCache<K, V> extends AbstractCache<K, V> {
     @Override
     public V remove(Object o) {
         synchronized (this) {
-            SimpleCacheEntry<K, V> e = rawremove(o);
+            CacheEntry<K, V> e = rawremove(o);
             if (e == null) {
                 return null;
             }
-            return e.getValue();
+            return e.getValueWithAccess();
         }
     }
 
     @SuppressWarnings("element-type-mismatch")
-    private SimpleCacheEntry<K, V> rawremove(Object o) {
+    private CacheEntry<K, V> rawremove(Object o) {
         return _cache.remove(o);
     }
 
@@ -172,9 +168,9 @@ public class SimpleCache<K, V> extends AbstractCache<K, V> {
         SortedMap<Instant, Set<K>> keyByUpdate = new TreeMap<>();
         synchronized (this) {
             Instant now = _clock.instant();
-            Iterator<SimpleCacheEntry<K, V>> iter = _cache.values().iterator();
+            Iterator<CacheEntry<K, V>> iter = _cache.values().iterator();
             while (iter.hasNext()) {
-                final SimpleCacheEntry<K, V> e = iter.next();
+                final CacheEntry<K, V> e = iter.next();
                 final Instant accessExpiry = e.getAccess().plus(getLastAccessLimit());
                 final Instant updateExpiry = e.getUpdate().plus(getLastUpdateLimit());
                 if (accessExpiry.isBefore(now) || updateExpiry.isBefore(now)) {
@@ -210,65 +206,12 @@ public class SimpleCache<K, V> extends AbstractCache<K, V> {
         }
         index.remove(t);
     }
-    
-    @SuppressWarnings("hiding")
-    private final class SimpleCacheEntry<K, V> implements CacheEntry<K, V> {
-        
-        private final K _key;
-        private V _value;
-        private Instant _access;
-        private Instant _update;
-        
-        SimpleCacheEntry(K key, V value) {
-            _key = key;
-            _value = value;
-            _access = _clock.instant();
-            _update = _clock.instant();
-        }
 
-        @Override
-        public K getKey() {
-            return _key;
-        }
+    @Override
+    protected void entryAccessed(CacheEntry cache, Instant old) {
+    }
 
-        @Override
-        public V getValue() {
-            synchronized (this) {
-                _access = _clock.instant();
-                return _value;
-            }
-        }
-
-        @Override
-        public V getValueSnapshot() {
-            synchronized (this) {
-                return _value;
-            }
-        }
-
-        @Override
-        public V setValue(V v) {
-            synchronized (this) {
-                V oldvalue = _value;
-                _value = v;
-                _update = _clock.instant();
-                return oldvalue;
-            }
-        }
-
-        @Override
-        public Instant getAccess() {
-            synchronized (this) {
-                return _access;
-            }
-        }
-
-        @Override
-        public Instant getUpdate() {
-            synchronized (this) {
-                return _update;
-            }
-        }
-        
+    @Override
+    protected void entryUpdated(CacheEntry cache, Instant old) {
     }
 }

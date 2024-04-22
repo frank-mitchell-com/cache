@@ -24,7 +24,6 @@
 package com.frank_mitchell.cache;
 
 import java.time.Instant;
-import java.util.Map;
 
 /**
  * An interface providing a "safe" read-only facade to inspect a cache.
@@ -38,7 +37,7 @@ public interface CacheView<K,V> {
      * The key in the cache for this entry.
      * 
      * @return the key in the cache
-     * @see Map.Entry#getKey() 
+     * @see java.util.Map.Entry#getKey() 
      */
     K getKey();
 
@@ -46,9 +45,9 @@ public interface CacheView<K,V> {
      * A "safe" look in the cache for this entry.
      * 
      * @return the key in the cache
-     * @see Map.Entry#getValue()
+     * @see java.util.Map.Entry#getValue()
      */
-    V getValueSnapshot();
+    V getValue();
 
     /**
      * Time entry was last accessed.

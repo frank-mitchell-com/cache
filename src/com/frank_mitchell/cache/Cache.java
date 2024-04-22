@@ -25,7 +25,9 @@
 package com.frank_mitchell.cache;
 
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -74,13 +76,6 @@ public interface Cache<K, V> {
      * @see Map#containsKey(java.lang.Object) 
      */
     public boolean containsKey(Object o);
-
-    /**
-     * 
-     * @param o
-     * @return the entry for the argument or {@code null}.
-     */
-    public CacheEntry<K, V> getEntry(Object o);
 
     /**
      * 
@@ -207,6 +202,135 @@ public interface Cache<K, V> {
             }
             return newValue;
         }
+    }
+
+    /**
+     * 
+     * @param set
+     * @return a map with all the keys and their non-null values
+     * @see javax.cache.Cache#getAll(java.util.Set) 
+     */
+    public default Map<K, V> getAll(Set<? extends K> set) {
+        HashMap<K,V> result = new HashMap<>(set.size());
+        for (K k : set) {
+            V v = get(k);
+            if (v != null) {
+                result.put(k, v);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 
+     * @param k
+     * @param v
+     * @return the previous value of the key.
+     * @see javax.cache.Cache#getAndPut(java.lang.Object, java.lang.Object) 
+     */
+    public default V getAndPut(K k, V v) {
+        return put(k, v);
+    }
+
+    /**
+     * 
+     * @param map 
+     * @see javax.cache.Cache#putAll(java.util.Map) 
+     */
+    public default void putAll(Map<? extends K, ? extends V> map) {
+        for (Map.Entry<? extends K, ? extends V> e : map.entrySet()) {
+            if (e.getKey() != null && e.getValue() != null) {
+                put(e.getKey(), e.getValue());
+            }
+        }
+    }
+
+    /**
+     * 
+     * @param k
+     * @param v
+     * @return 
+     * @see javax.cache.Cache#remove(java.lang.Object, java.lang.Object) 
+     */
+    public default boolean remove(K k, V v) {
+        final V oldv = get(k);
+        if (oldv != null && oldv.equals(v)) {
+            remove(k);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 
+     * @param k
+     * @return 
+     * @see javax.cache.Cache#getAndRemove(java.lang.Object) 
+     */
+    public default V getAndRemove(K k) {
+        return remove(k);
+    }
+
+    /**
+     * 
+     * @param k
+     * @param v
+     * @param newv
+     * @return 
+     * @see javax.cache.Cache#replace(java.lang.Object, java.lang.Object, java.lang.Object) 
+     */
+    public default boolean replace(K k, V v, V newv) {
+        final V oldv = get(k);
+        if (oldv != null && oldv.equals(v)) {
+            put(k, newv);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 
+     * @param k
+     * @param v
+     * @return 
+     * @see javax.cache.Cache#replace(java.lang.Object, java.lang.Object) 
+     */
+    public default boolean replace(K k, V v) {
+        final V oldv = get(k);
+        if (oldv != null) {
+            put(k, v);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 
+     * @param k
+     * @param v
+     * @return 
+     * @see javax.cache.Cache#getAndReplace(java.lang.Object) 
+     */
+    public default V getAndReplace(K k, V v) {
+        return put(k, v);
+    }
+
+    /**
+     * 
+     * @param set
+     * @see javax.cache.Cache#removeAll(java.lang.Set) 
+     */
+    public default void removeAll(Set<? extends K> set) {
+        for (K k : set) {
+            remove(k);
+        }
+    }
+
+    /**
+     * @see javax.cache.Cache#removeAll() 
+     */
+    public default void removeAll() {
+        clear();
     }
 
     /**

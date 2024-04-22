@@ -23,7 +23,6 @@
  */
 package com.frank_mitchell.cache.spi;
 
-import com.frank_mitchell.cache.CacheEntry;
 import com.frank_mitchell.cache.CacheView;
 import java.time.Instant;
 
@@ -42,7 +41,7 @@ public class SimpleCacheView<K,V> implements CacheView<K,V> {
     
     public SimpleCacheView(CacheEntry<K, V> e) {
         _key = e.getKey();
-        _value = e.getValueSnapshot();
+        _value = e.getValueNoAccess();
         _access = e.getAccess();
         _update = e.getUpdate();
     }
@@ -60,7 +59,7 @@ public class SimpleCacheView<K,V> implements CacheView<K,V> {
     }
 
     @Override
-    public V getValueSnapshot() {
+    public V getValue() {
         return _value;
     }
 

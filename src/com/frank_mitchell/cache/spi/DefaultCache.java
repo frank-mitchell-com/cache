@@ -24,7 +24,6 @@
 package com.frank_mitchell.cache.spi;
 
 import com.frank_mitchell.cache.Cache;
-import com.frank_mitchell.cache.CacheEntry;
 import com.frank_mitchell.cache.CacheView;
 import java.time.Clock;
 import java.time.Duration;
@@ -55,9 +54,9 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
 
     private final Clock _clock;
 
-    private final ConcurrentMap<K, DefaultEntry<K, V>> _cache = new ConcurrentHashMap<>();
-    private final NavigableMap<Instant, Set<DefaultEntry<K, V>>> _accessIndex = new TreeMap<>();
-    private final NavigableMap<Instant, Set<DefaultEntry<K, V>>> _updateIndex = new TreeMap<>();
+    private final ConcurrentMap<K, CacheEntry<K, V>> _cache = new ConcurrentHashMap<>();
+    private final NavigableMap<Instant, Set<CacheEntry<K, V>>> _accessIndex = new TreeMap<>();
+    private final NavigableMap<Instant, Set<CacheEntry<K, V>>> _updateIndex = new TreeMap<>();
     private final Lock _indexLock = new ReentrantLock(true);
 
     /**
@@ -77,6 +76,11 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
     }
 
     @Override
+    protected Clock getClock() {
+        return _clock;
+    }
+    
+    @Override
     public int size() {
         return _cache.size();
     }
@@ -94,12 +98,6 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
     }
 
     @Override
-    public CacheEntry<K, V> getEntry(Object o) {
-        clearExpired();
-        return rawget(o);
-    }
-
-    @Override
     public V get(Object key) {
         if (key == null) {
             return null;
@@ -107,15 +105,15 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
 
         V result = null;
         clearExpired();
-        DefaultEntry<K, V> entry = rawget(key);
+        CacheEntry<K, V> entry = rawget(key);
         if (entry != null) {
-            result = entry.getValue();
+            result = entry.getValueWithAccess();
         }
         return result;
     }
 
     @SuppressWarnings("element-type-mismatch")
-    private DefaultEntry<K, V> rawget(Object key) {
+    private CacheEntry<K, V> rawget(Object key) {
         return _cache.get(key);
     }
 
@@ -126,9 +124,9 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
 
         V result = null;
         clearExpired();
-        DefaultEntry<K, V> entry = _cache.get((K) key);
+        CacheEntry<K, V> entry = _cache.get((K) key);
         if (entry == null) {
-            entry = new DefaultEntry<>(this, key, value);
+            entry = new CacheEntry<>(this, key, value);
             entryCreated(entry);
             _cache.put(key, entry);
         } else {
@@ -145,16 +143,16 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
 
         V result = null;
         clearExpired();
-        DefaultEntry<K, V> entry = rawremove(key);
+        CacheEntry<K, V> entry = rawremove(key);
         if (entry != null) {
-            result = entry.getValueSnapshot();
+            result = entry.getValueNoAccess();
             entryDeleted(entry);
         }
         return result;
     }
 
     @SuppressWarnings("element-type-mismatch")
-    private DefaultEntry<K, V> rawremove(Object key) {
+    private CacheEntry<K, V> rawremove(Object key) {
         return _cache.remove(key);
     }
 
@@ -208,18 +206,18 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
         }
     }
 
-    private void removeOrphanKeys(Map<Instant, Set<DefaultEntry<K, V>>> index,
+    private void removeOrphanKeys(Map<Instant, Set<CacheEntry<K, V>>> index,
             Collection<Instant> cleanup) {
         for (Instant inst : cleanup) {
-            Set<DefaultEntry<K, V>> entryset = index.get(inst);
+            Set<CacheEntry<K, V>> entryset = index.get(inst);
 
             if (entryset == null) {
                 continue;
             }
 
-            Iterator<DefaultEntry<K, V>> entryiter = entryset.iterator();
+            Iterator<CacheEntry<K, V>> entryiter = entryset.iterator();
             while (entryiter.hasNext()) {
-                DefaultEntry<K, V> e = entryiter.next();
+                CacheEntry<K, V> e = entryiter.next();
                 if (!_cache.containsKey(e.getKey())) {
                     entryiter.remove();
                 }
@@ -230,13 +228,13 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
         }
     }
 
-    private void removeOldest(NavigableMap<Instant, Set<DefaultEntry<K, V>>> index,
+    private void removeOldest(NavigableMap<Instant, Set<CacheEntry<K, V>>> index,
             Collection<Instant> accesses,
             Collection<Instant> updates) {
         while (getMaximumSize() < size()) {
-            Map.Entry<Instant, Set<DefaultEntry<K, V>>> first = index.firstEntry();
-            for (DefaultEntry<K, V> e : first.getValue()) {
-                DefaultEntry<K, V> d = _cache.remove(e.getKey());
+            Map.Entry<Instant, Set<CacheEntry<K, V>>> first = index.firstEntry();
+            for (CacheEntry<K, V> e : first.getValue()) {
+                CacheEntry<K, V> d = _cache.remove(e.getKey());
                 accesses.add(d.getAccess());
                 updates.add(d.getUpdate());
             }
@@ -244,19 +242,19 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
         }
     }
 
-    private void removeIfPastExpiry(final NavigableMap<Instant, Set<DefaultEntry<K, V>>> index,
+    private void removeIfPastExpiry(final NavigableMap<Instant, Set<CacheEntry<K, V>>> index,
             Duration limit,
             Collection<Instant> accesses,
             Collection<Instant> updates) {
         // crawl through each "list", deleting entries until we hit the minimums
         Instant now = _clock.instant();
-        Iterator<Map.Entry<Instant, Set<DefaultEntry<K, V>>>> iter = index.entrySet().iterator();
+        Iterator<Map.Entry<Instant, Set<CacheEntry<K, V>>>> iter = index.entrySet().iterator();
         while (iter.hasNext()) {
-            Map.Entry<Instant, Set<DefaultEntry<K, V>>> entry = iter.next();
+            Map.Entry<Instant, Set<CacheEntry<K, V>>> entry = iter.next();
             Instant expiry = entry.getKey().plus(limit);
             if (expiry.isBefore(now)) {
-                for (DefaultEntry<K, V> e : entry.getValue()) {
-                    DefaultEntry<K, V> d = _cache.remove(e.getKey());
+                for (CacheEntry<K, V> e : entry.getValue()) {
+                    CacheEntry<K, V> d = _cache.remove(e.getKey());
                     accesses.add(d.getAccess());
                     updates.add(d.getUpdate());
                 }
@@ -268,11 +266,8 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
         }
     }
 
-    public Clock getClock() {
-        return _clock;
-    }
-
-    void entryAccessed(DefaultEntry<K, V> entry, Instant old) {
+    @Override
+    protected void entryAccessed(CacheEntry<K, V> entry, Instant old) {
         _indexLock.lock();
         try {
             updateIndex(_accessIndex, entry, old, entry.getAccess());
@@ -281,7 +276,8 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
         }
     }
 
-    void entryUpdated(DefaultEntry<K, V> entry, Instant old) {
+    @Override
+    protected void entryUpdated(CacheEntry<K, V> entry, Instant old) {
         _indexLock.lock();
         try {
             updateIndex(_updateIndex, entry, old, entry.getUpdate());
@@ -290,7 +286,7 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
         }
     }
 
-    void entryCreated(DefaultEntry<K, V> entry) {
+    void entryCreated(CacheEntry<K, V> entry) {
         _indexLock.lock();
         try {
             updateIndex(_accessIndex, entry, null, entry.getAccess());
@@ -300,7 +296,7 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
         }
     }
 
-    void entryDeleted(DefaultEntry<K, V> entry) {
+    void entryDeleted(CacheEntry<K, V> entry) {
         _indexLock.lock();
         try {
             updateIndex(_accessIndex, entry, entry.getAccess(), null);
@@ -311,8 +307,8 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
     }
 
     private void updateIndex(
-            final NavigableMap<Instant, Set<DefaultEntry<K, V>>> index,
-            final DefaultEntry<K, V> entry,
+            final NavigableMap<Instant, Set<CacheEntry<K, V>>> index,
+            final CacheEntry<K, V> entry,
             final Instant oldtime,
             final Instant newtime) {
         if (entry == null || index == null) {
@@ -320,7 +316,7 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
         }
         // 1. remove the exact entry at `oldtime` (if not null and present)
         if (oldtime != null) {
-            Set<DefaultEntry<K, V>> entries = index.get(oldtime);
+            Set<CacheEntry<K, V>> entries = index.get(oldtime);
             if (entries != null) {
                 entries.remove(entry);
                 if (entries.isEmpty()) {
@@ -330,7 +326,7 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
         }
         // 2. re-add it to `index` at `newtime` (if not null)
         if (newtime != null) {
-            Set<DefaultEntry<K, V>> entries = index.get(newtime);
+            Set<CacheEntry<K, V>> entries = index.get(newtime);
             if (entries == null) {
                 entries = new ConcurrentHashSet<>();
                 index.put(newtime, entries);
