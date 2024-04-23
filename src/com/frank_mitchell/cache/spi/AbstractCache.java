@@ -30,6 +30,7 @@ import com.frank_mitchell.cache.CacheView;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * Abstract class for most {@link Cache} implementations.
@@ -42,27 +43,12 @@ public abstract class AbstractCache<K,V>
 	implements Cache<K,V>, CacheParameters {
 
     protected volatile boolean _disabled = false;
-    protected boolean _dropLastAccessed = false;
-    protected Duration _lastAccessLimit = Duration.ofMillis(Long.MAX_VALUE);
     protected Duration _lastUpdateLimit = Duration.ofMillis(Long.MAX_VALUE);
     protected int _maxSize = Integer.MAX_VALUE;
     
     protected abstract Clock getClock();
     
-    @Override
-    public boolean isLastAccessedDroppedFirst() {
-        synchronized (this) {
-            return _dropLastAccessed;
-        }
-    }
-
-    @Override
-    public Duration getLastAccessLimit() {
-        synchronized (this) {
-            return _lastAccessLimit;
-        }
-    }
-
+    
     @Override
     public Duration getLastUpdateLimit() {
         synchronized (this) {
@@ -74,22 +60,6 @@ public abstract class AbstractCache<K,V>
     public int getMaximumSize() {
         synchronized (this) {
             return _maxSize;
-        }
-    }
-
-    @Override
-    public void setLastAccessedDroppedFirst(boolean value) {
-        synchronized (this) {
-            _dropLastAccessed = value;
-            clearExpired();
-        }
-    }
-
-    @Override
-    public void setLastAccessLimit(Duration value) {
-        synchronized (this) {
-            _lastAccessLimit = value.abs();
-            clearExpired();
         }
     }
 
@@ -129,22 +99,179 @@ public abstract class AbstractCache<K,V>
         }
     }
     
+    protected abstract CacheEntry<K, V> rawget(K key);
+    
+    protected abstract boolean rawput(K key, V value);
+    
+    protected abstract boolean rawremove(K key);
+    
     @Override
-    public V put(K key, V value) {
-        V result = null;
-        if (!isDisabled() && key != null && value != null) {
-            result = rawput(key, value);
+    public void put(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        if (isDisabled()) {
+            return;
         }
-        return result;
+        rawput(key, value);
     }
     
     /**
      * 
      * @param key
      * @param value
-     * @return 
+     * @return the previous value or {@code null}
+     * @see javax.cache.Cache#putIfAbsent(java.lang.Object, java.lang.Object) 
      */
-    protected abstract V rawput(K key, V value);
+    @Override
+    public boolean putIfAbsent(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        if (isDisabled()) {
+            return false;
+        }
+        if (!containsKey(key)) {
+            put(key, value);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     *
+     * @param key
+     * @param value
+     * @return the previous value of the key.
+     * @see javax.cache.Cache#getAndPut(java.lang.Object, java.lang.Object)
+     */
+    @Override
+    public V getAndPut(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        if (isDisabled()) {
+            return null;
+        }
+        CacheEntry<K, V> rec = rawget(key);
+        V oldv = rec == null ? null : rec.getValueWithAccess();
+        rawput(key, value);
+        return oldv;
+    }
+
+    /**
+     *
+     * @param key
+     * @param value
+     * @return
+     * @see javax.cache.Cache#remove(java.lang.Object, java.lang.Object)
+     */
+    @Override
+    public boolean remove(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        if (isDisabled()) {
+            return false;
+        }
+        CacheEntry<K, V> e = rawget(key);
+        if (e == null) {
+            return false;
+        }
+        if (e.getValueNoAccess().equals(value)) {
+            rawremove(key);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     *
+     * @param key
+     * @return
+     * @see javax.cache.Cache#getAndRemove(java.lang.Object)
+     */
+    @Override
+    public V getAndRemove(K key) {
+        Objects.requireNonNull(key);
+        if (isDisabled()) {
+            return null;
+        }
+        V oldv = get(key);
+        rawremove(key);
+        return oldv;
+    }
+
+    /**
+     *
+     * @param key
+     * @param value
+     * @param newvalue
+     * @return
+     * @see javax.cache.Cache#replace(java.lang.Object, java.lang.Object,
+     * java.lang.Object)
+     */
+    @Override
+    public boolean replace(K key, V value, V newvalue) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        Objects.requireNonNull(newvalue);
+        if (isDisabled()) {
+            return false;
+        }
+        final V oldv = get(key);
+        if (oldv != null && oldv.equals(value)) {
+            replace(key, newvalue);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     *
+     * @param key
+     * @param value
+     * @return
+     * @see javax.cache.Cache#replace(java.lang.Object, java.lang.Object)
+     */
+    @Override
+    public boolean replace(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        if (isDisabled()) {
+            return false;
+        }
+        final V oldv = get(key);
+        if (oldv != null) {
+            put(key, value);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     *
+     * @param key
+     * @param value
+     * @return
+     * @see javax.cache.Cache#getAndReplace(java.lang.Object)
+     */
+    @Override
+    public V getAndReplace(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        if (isDisabled()) {
+            return null;
+        }
+        V oldv = get(key);
+        replace(key, value);
+        return oldv;
+    }
+
+    /**
+     * @see javax.cache.Cache#removeAll()
+     */
+    @Override
+    public void removeAll() {
+        clear();
+    }
     
     protected abstract void entryAccessed(CacheEntry<K, V> cache, Instant old);
     
@@ -168,8 +295,7 @@ public abstract class AbstractCache<K,V>
             .append("disabled=").append(this.isDisabled()).append(",")
             .append("maxsize=").append(this.getMaximumSize()).append(",")
             .append("update=").append(this.getLastUpdateLimit()).append(",")
-            .append("access=").append(this.getLastAccessLimit()).append(",")
-            .append("dropaccess=").append(this.isLastAccessedDroppedFirst())
+            .append("dropaccess=").append(true)
             .append(">");
         return result.toString();
     }

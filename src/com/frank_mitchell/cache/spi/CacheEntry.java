@@ -73,19 +73,16 @@ public final class CacheEntry<K, V> {
         }
     }
 
-    public V setValue(V v) {
-        V oldvalue;
+    public void setValue(V v) {
         Instant oldtime;
         synchronized (this) {
-            oldvalue = _value;
             oldtime = _update;
             _value = v;
             _update = getClock().instant();
         }
         _cache.entryUpdated(this, oldtime);
-        return oldvalue;
     }
-
+    
     public Instant getAccess() {
         synchronized (this) {
             return _access;

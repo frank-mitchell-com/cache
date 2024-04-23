@@ -66,7 +66,7 @@
         <mkdir dir="${coverage.report.dir}" />
         <delete failonerror="false" file="${coverage.data.dir}/jacoco.exec"/>
         <jacoco:coverage destfile="${coverage.data.dir}/jacoco.exec">
-            <junit printsummary="yes" fork="yes" haltonfailure="no">
+            <junit printsummary="yes" fork="yes" haltonfailure="yes">
                 <classpath refid="test.classpath" />
                 <formatter type="plain" />
                 <batchtest fork="yes" todir="${test.report.dir}">

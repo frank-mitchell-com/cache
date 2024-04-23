@@ -98,11 +98,7 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
     }
 
     @Override
-    public V get(Object key) {
-        if (key == null) {
-            return null;
-        }
-
+    public V get(K key) {
         V result = null;
         clearExpired();
         CacheEntry<K, V> entry = rawget(key);
@@ -112,48 +108,45 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
         return result;
     }
 
-    @SuppressWarnings("element-type-mismatch")
-    private CacheEntry<K, V> rawget(Object key) {
+    @Override
+    protected CacheEntry<K, V> rawget(K key) {
+        Objects.requireNonNull(key);
         return _cache.get(key);
     }
 
     @Override
-    protected V rawput(K key, V value) {
+    protected boolean rawput(K key, V value) {
         Objects.requireNonNull(key);
         Objects.requireNonNull(value);
 
-        V result = null;
         clearExpired();
         CacheEntry<K, V> entry = _cache.get((K) key);
         if (entry == null) {
             entry = new CacheEntry<>(this, key, value);
             entryCreated(entry);
             _cache.put(key, entry);
+            return true;
         } else {
-            result = entry.setValue(value);
+            entry.setValue(value);
+            return false;
         }
-        return result;
     }
 
     @Override
-    public V remove(Object key) {
-        if (key == null) {
-            return null;
-        }
+    public void remove(K key) {
+        Objects.requireNonNull(key);
 
-        V result = null;
         clearExpired();
-        CacheEntry<K, V> entry = rawremove(key);
+        CacheEntry<K, V> entry = rawget(key);
         if (entry != null) {
-            result = entry.getValueNoAccess();
+            rawremove(key);
             entryDeleted(entry);
         }
-        return result;
     }
 
-    @SuppressWarnings("element-type-mismatch")
-    private CacheEntry<K, V> rawremove(Object key) {
-        return _cache.remove(key);
+    @Override
+    protected boolean rawremove(K key) {
+        return _cache.remove(key) != null;
     }
 
     @Override
@@ -186,17 +179,12 @@ public class DefaultCache<K, V> extends AbstractCache<K, V> {
 
         _indexLock.lock();
         try {
-            // crawl through each "list", deleting entries until we hit the minimums
-            removeIfPastExpiry(_accessIndex, getLastAccessLimit(), accessCleanup, updateCleanup);
+            // crawl through updates, deleting entries until we hit the minimums
             removeIfPastExpiry(_updateIndex, getLastUpdateLimit(), accessCleanup, updateCleanup);
 
             // if we're still over the maximum size, start throwing out old stuff
             // based on whether we throw out old updates or least recently accessed.
-            if (isLastAccessedDroppedFirst()) {
-                removeOldest(_accessIndex, accessCleanup, updateCleanup);
-            } else {
-                removeOldest(_updateIndex, accessCleanup, updateCleanup);
-            }
+            removeOldest(_accessIndex, accessCleanup, updateCleanup);
 
             // Clean up deleted entries from both indexes.
             removeOrphanKeys(_accessIndex, accessCleanup);

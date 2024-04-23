@@ -26,6 +26,7 @@ package com.frank_mitchell.cache.spi;
 import com.frank_mitchell.cache.Cache;
 import com.frank_mitchell.cache.CacheView;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -35,6 +36,7 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Objects;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -97,7 +99,9 @@ public class SimpleCache<K, V> extends AbstractCache<K, V> {
     }
 
     @Override
-    public V get(Object key) {
+    public V get(K key) {
+        Objects.requireNonNull(key);
+        
         V result = null;
         synchronized (this) {
             clearExpired();
@@ -109,39 +113,42 @@ public class SimpleCache<K, V> extends AbstractCache<K, V> {
         return result;
     }
 
-    @SuppressWarnings("element-type-mismatch")
-    private CacheEntry<K, V> rawget(Object key) {
-        return _cache.get(key);
+    @Override
+    protected CacheEntry<K, V> rawget(K key) {
+        synchronized (this) {
+            return _cache.get(key);
+        }
     }
 
     @Override
-    protected V rawput(K key, V value) {
-        V result = null;
+    protected boolean rawput(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
         synchronized (this) {
             CacheEntry<K, V> e = _cache.get(key);
             if (e == null) {
                 _cache.put(key, new CacheEntry<>(this, key, value));
+                return true;
             } else {
-                result = e.setValue(value);
+                e.setValue(value);
+                return false;
             }
         }
-        return result;
     }
 
     @Override
-    public V remove(Object o) {
+    public void remove(K key) {
+        Objects.requireNonNull(key);
         synchronized (this) {
-            CacheEntry<K, V> e = rawremove(o);
-            if (e == null) {
-                return null;
-            }
-            return e.getValueWithAccess();
+            rawremove(key);
         }
     }
 
-    @SuppressWarnings("element-type-mismatch")
-    private CacheEntry<K, V> rawremove(Object o) {
-        return _cache.remove(o);
+    @Override
+    protected boolean rawremove(K key) {
+        synchronized (this) {
+            return _cache.remove(key) != null;
+        }
     }
 
     @Override
@@ -171,9 +178,8 @@ public class SimpleCache<K, V> extends AbstractCache<K, V> {
             Iterator<CacheEntry<K, V>> iter = _cache.values().iterator();
             while (iter.hasNext()) {
                 final CacheEntry<K, V> e = iter.next();
-                final Instant accessExpiry = e.getAccess().plus(getLastAccessLimit());
-                final Instant updateExpiry = e.getUpdate().plus(getLastUpdateLimit());
-                if (accessExpiry.isBefore(now) || updateExpiry.isBefore(now)) {
+                final Instant expiry = e.getUpdate().plus(getLastUpdateLimit());
+                if (expiry.isBefore(now)) {
                     iter.remove();
                 } else {
                     addKey(keyByAccess, e.getAccess(), e.getKey());
@@ -181,11 +187,7 @@ public class SimpleCache<K, V> extends AbstractCache<K, V> {
                 }
             }
             while (_cache.size() > getMaximumSize()) {
-                if (isLastAccessedDroppedFirst()) {
-                    removeFirstKey(keyByAccess);
-                } else {
-                    removeFirstKey(keyByUpdate);
-                }
+                removeFirstKey(keyByAccess);
             }
         }
     }

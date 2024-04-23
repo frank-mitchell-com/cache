@@ -31,7 +31,9 @@ import com.frank_mitchell.cache.spi.DefaultCache;
 import java.time.Clock;
 import java.time.Duration;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 
 /**
  * Unit tests for all {@link Cache} instances.
@@ -68,25 +70,26 @@ public class DefaultCacheTest {
                 increment.toMillis(), _clock.millis() - oldtime);
     }
 
-    @Test
-    public void testNullKey() {
+    @Test(expected=NullPointerException.class)
+    public void testGetNullKey() {
+        _cache.get(null);
+    }
+
+    @Test(expected=NullPointerException.class)
+    public void testPutNullKey() {
         _cache.put(null, "A");
-
-        assertNull(_cache.get(null));
-        assertEquals(0, _cache.size());
     }
 
-    @Test
-    public void testNullValue() {
+    @Test(expected=NullPointerException.class)
+    public void testPutNullValue() {
         _cache.put("alpha", null);
-
-        assertNull(_cache.get("alpha"));
-        assertEquals(0, _cache.size());
     }
 
     @Test
-    public void testRemoveNonexistentKey() {
-        assertNull(_cache.remove("alpha"));
+    public void testRemoveKey() {
+        _cache.put("alpha", "A");
+        _cache.remove("alpha");
+        assertNull(_cache.get("alpha"));
     }
 
     @Test

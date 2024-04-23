@@ -67,37 +67,6 @@ public interface CacheParameters {
     }
 
     /**
-     * Whether this cache was configured to drop the least recently read
-     * entry.  The default is to drop the least recently written entry.
-     *
-     * @return whether dropping least recently read.
-     */
-    public boolean isLastAccessedDroppedFirst();
-
-    /*
-     * Set whether the cache drops the least recently accessed entry.
-     * The default is to drop the least recently updated entry.
-     * @param value the value to set.
-     */
-    public void setLastAccessedDroppedFirst(boolean value);
-
-    /**
-     * The maximum interval between now and an entry's last access time 
-     * before an entry will be removed.
-     *
-     * @return maximum read interval
-     */
-    public Duration getLastAccessLimit();
-
-    /**
-     * Set the maximum interval between now and an 
-     * entry's last access time before an entry will be removed.
-     * 
-     * @param value new maximum interval
-     */
-    public void setLastAccessLimit(Duration value);
-
-    /**
      * The maximum interval between now and an entry's last update time 
      * before an entry will be removed.
      *

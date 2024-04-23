@@ -35,8 +35,6 @@ final class CacheParameterHolder implements CacheParameters {
     private static final Duration DEFAULT_DURATION = Duration.ofMillis(Long.MAX_VALUE);
     private static final int DEFAULT_MAX_SIZE = Integer.MAX_VALUE;
     private volatile boolean _disabled = false;
-    private volatile boolean _lastAccessedDroppedFirst = false;
-    private volatile Duration _lastAccessLimit = DEFAULT_DURATION;
     private volatile Duration _lastUpdateLimit = DEFAULT_DURATION;
     private volatile int _maximumSize = DEFAULT_MAX_SIZE;
 
@@ -48,26 +46,6 @@ final class CacheParameterHolder implements CacheParameters {
     @Override
     public void setDisabled(boolean disabled) {
         _disabled = disabled;
-    }
-
-    @Override
-    public boolean isLastAccessedDroppedFirst() {
-        return _lastAccessedDroppedFirst;
-    }
-
-    @Override
-    public void setLastAccessedDroppedFirst(boolean value) {
-        _lastAccessedDroppedFirst = value;
-    }
-
-    @Override
-    public Duration getLastAccessLimit() {
-        return _lastAccessLimit;
-    }
-
-    @Override
-    public void setLastAccessLimit(Duration value) {
-        _lastAccessLimit = value;
     }
 
     @Override
@@ -101,9 +79,7 @@ final class CacheParameterHolder implements CacheParameters {
     public static void copyParameters(CacheParameters source, CacheParameters dest) {
         if (source != null && dest != null) {
             dest.setDisabled(source.isDisabled());
-            dest.setLastAccessLimit(safe(source.getLastAccessLimit(), DEFAULT_DURATION));
             dest.setLastUpdateLimit(safe(source.getLastUpdateLimit(), DEFAULT_DURATION));
-            dest.setLastAccessedDroppedFirst(source.isLastAccessedDroppedFirst());
             dest.setMaximumSize(safe(source.getMaximumSize(), DEFAULT_MAX_SIZE));
         }
     }

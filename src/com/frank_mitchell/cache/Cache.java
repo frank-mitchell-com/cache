@@ -75,7 +75,7 @@ public interface Cache<K, V> {
      * @return whether argument is a key
      * @see Map#containsKey(java.lang.Object) 
      */
-    public boolean containsKey(Object o);
+    public boolean containsKey(K o);
 
     /**
      * 
@@ -83,24 +83,22 @@ public interface Cache<K, V> {
      * @return the value for the argument or {@code null}
      * @see Map#get(java.lang.Object) 
      */
-    public V get(Object o);
+    public V get(K o);
 
     /**
      * 
      * @param k
      * @param v
-     * @return the previous value for the key or {@code null}
-     * @see Map#put(java.lang.Object, java.lang.Object)
+     * @see javax.cache.Cache#put(java.lang.Object, java.lang.Object)
      */
-    public V put(K k, V v);
+    public void put(K k, V v);
 
     /**
      * 
      * @param o
-     * @return the previous value for the key or {@code null}
-     * @see Map#remove(java.lang.Object) 
+     * @see javax.cache.Cache#remove(java.lang.Object) 
      */
-    public V remove(Object o);
+    public void remove(K o);
 
     /**
      * @see Map#clear() 
@@ -114,7 +112,7 @@ public interface Cache<K, V> {
      * @return the value for the key or the default value if not found.
      * @see Map#getOrDefault(java.lang.Object, java.lang.Object) 
      */
-    public default V getOrDefault(Object key, V defaultValue) {
+    public default V getOrDefault(K key, V defaultValue) {
         V value = get(key);
         if (value == null) {
             return defaultValue;
@@ -129,15 +127,9 @@ public interface Cache<K, V> {
      * @param key
      * @param value
      * @return the previous value or {@code null}
-     * @see Map#putIfAbsent(java.lang.Object, java.lang.Object) 
+     * @see javax.cache.Cache#putIfAbsent(java.lang.Object, java.lang.Object) 
      */
-    public default V putIfAbsent(K key, V value) {
-        if (!containsKey(key)) {
-            return put(key, value);
-        } else {
-            return null;
-        }
-    }
+    public boolean putIfAbsent(K key, V value);
 
     /**
      * 
@@ -228,9 +220,7 @@ public interface Cache<K, V> {
      * @return the previous value of the key.
      * @see javax.cache.Cache#getAndPut(java.lang.Object, java.lang.Object) 
      */
-    public default V getAndPut(K k, V v) {
-        return put(k, v);
-    }
+    public V getAndPut(K k, V v);
 
     /**
      * 
@@ -252,14 +242,7 @@ public interface Cache<K, V> {
      * @return 
      * @see javax.cache.Cache#remove(java.lang.Object, java.lang.Object) 
      */
-    public default boolean remove(K k, V v) {
-        final V oldv = get(k);
-        if (oldv != null && oldv.equals(v)) {
-            remove(k);
-            return true;
-        }
-        return false;
-    }
+    public boolean remove(K k, V v);
 
     /**
      * 
@@ -267,9 +250,7 @@ public interface Cache<K, V> {
      * @return 
      * @see javax.cache.Cache#getAndRemove(java.lang.Object) 
      */
-    public default V getAndRemove(K k) {
-        return remove(k);
-    }
+    public V getAndRemove(K k);
 
     /**
      * 
@@ -279,14 +260,7 @@ public interface Cache<K, V> {
      * @return 
      * @see javax.cache.Cache#replace(java.lang.Object, java.lang.Object, java.lang.Object) 
      */
-    public default boolean replace(K k, V v, V newv) {
-        final V oldv = get(k);
-        if (oldv != null && oldv.equals(v)) {
-            put(k, newv);
-            return true;
-        }
-        return false;
-    }
+    public boolean replace(K k, V v, V newv);
 
     /**
      * 
@@ -295,14 +269,7 @@ public interface Cache<K, V> {
      * @return 
      * @see javax.cache.Cache#replace(java.lang.Object, java.lang.Object) 
      */
-    public default boolean replace(K k, V v) {
-        final V oldv = get(k);
-        if (oldv != null) {
-            put(k, v);
-            return true;
-        }
-        return false;
-    }
+    public boolean replace(K k, V v);
 
     /**
      * 
@@ -311,9 +278,7 @@ public interface Cache<K, V> {
      * @return 
      * @see javax.cache.Cache#getAndReplace(java.lang.Object) 
      */
-    public default V getAndReplace(K k, V v) {
-        return put(k, v);
-    }
+    public V getAndReplace(K k, V v);
 
     /**
      * 
@@ -329,9 +294,7 @@ public interface Cache<K, V> {
     /**
      * @see javax.cache.Cache#removeAll() 
      */
-    public default void removeAll() {
-        clear();
-    }
+    public void removeAll();
 
     /**
      * A partial snapshot of the cache's contents. Unlike {#link Map#entrySet()}
