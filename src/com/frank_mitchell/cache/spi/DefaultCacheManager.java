@@ -25,7 +25,10 @@ package com.frank_mitchell.cache.spi;
 
 import com.frank_mitchell.cache.Cache;
 import com.frank_mitchell.cache.CacheParameters;
-import java.util.*;
+import java.util.Map;
+import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import com.frank_mitchell.cache.CacheManager;
@@ -100,13 +103,14 @@ public class DefaultCacheManager implements CacheManager {
 
     @Override
     public <K, V> Cache<K, V> getCache(String name, Class<K> keys, Class<V> values) throws IllegalArgumentException {
-        Cache<K, V> result = null;
+        Cache<K, V> result;
         synchronized (this) {
             CacheRecord<K, V> rec = getCacheRecord(name, keys, values);
             if (rec != null) {
                 result = rec.getCache();
             } else {
-                rec = new CacheRecord<>(new DefaultCache<>(), keys, values);
+                result = new DefaultCache<>();
+                rec = new CacheRecord<>(result, keys, values);
                 _caches.put(name, rec);
             }
             if (_params.containsKey(name)) {
@@ -145,7 +149,7 @@ public class DefaultCacheManager implements CacheManager {
 
     @Override
     public CacheConfiguration[] getConfigurations() {
-        return _configs.toArray(new CacheConfiguration[_configs.size()]);
+        return _configs.toArray((new CacheConfiguration[_configs.size()]));
     }
 
     @Override

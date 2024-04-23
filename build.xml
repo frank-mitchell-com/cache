@@ -100,7 +100,7 @@
     <target name="doc">
         <javadoc sourcepath="${src}" destdir="${doc.build.dir}">
             <classpath>
-                <pathelement location="${lib.codepoint}" />
+                <pathelement location="${lib}/cache-api/cache-api-1.1.1.jar" />
             </classpath>
         </javadoc>
     </target>

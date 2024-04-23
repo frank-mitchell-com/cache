@@ -31,9 +31,7 @@ import com.frank_mitchell.cache.spi.DefaultCache;
 import java.time.Clock;
 import java.time.Duration;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 /**
  * Unit tests for all {@link Cache} instances.
@@ -156,7 +154,7 @@ public class DefaultCacheTest {
 
     @Test
     public void testTooManyItems() {
-        final Duration increment = Duration.ofSeconds(1);
+        final Duration increment = Duration.ofMillis(1);
         final CacheParameters parameters = _cache.getParameters();
 
         parameters.setMaximumSize(2);

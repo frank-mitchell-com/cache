@@ -39,13 +39,6 @@ public class SimpleCacheView<K,V> implements CacheView<K,V> {
     private final Instant _access;
     private final Instant _update;
     
-    public SimpleCacheView(CacheEntry<K, V> e) {
-        _key = e.getKey();
-        _value = e.getValueNoAccess();
-        _access = e.getAccess();
-        _update = e.getUpdate();
-    }
-    
     public SimpleCacheView(K key, V value, Instant access, Instant update) {
         _key = key;
         _value = value;

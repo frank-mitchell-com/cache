@@ -24,7 +24,6 @@
 
 package com.frank_mitchell.cache;
 
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -33,10 +32,10 @@ import java.util.function.Function;
 
 /**
  * Instances cache a specified number of values by key for a specified time.
- * Entries are evicted when the entry has not been updated or accessed in a
+ * Entries are evicted when the entry has not been updated in a
  * specified interval, or when the cache is beyond its maximum size. The cache
- * will quietly remove expired entries, then remove the oldest or least used
- * (depending on a flag) until it's within its maximum size. Removed items
+ * will quietly remove expired entries, then remove the least recently used
+ * entries until the cache is within its maximum size. Removed items
  * simply disappear; no query will show they were ever added.
  *
  * Implementations can either use timers to remove items in a timely manner or
@@ -45,7 +44,8 @@ import java.util.function.Function;
  * doesn't <strong>see</strong> expired items and more items than the maximum,
  * they were never there.
  * 
- * This interface implements only a subset of methods from {@link Map}.
+ * This interface implements only a subset of methods from 
+ * [@link javax.cache.Cache} and a very few from {@link Map}.
  * In particular any method that iterates over the entire cache has been
  * removed, lest the iterator keep the cache from caching.  {@link #cacheViews()}
  * provides a snapshot of the cache's contents at the time it was called.
@@ -56,6 +56,7 @@ import java.util.function.Function;
 public interface Cache<K, V> {
 
     /**
+     * Counts the number of entries in the cache.
      *
      * @return number of entries
      * @see Map#size()
@@ -63,6 +64,7 @@ public interface Cache<K, V> {
     public int size();
 
     /**
+     * Indicates whether the cache is empty.
      * 
      * @return whether cache has elements.
      * @see Map#isEmpty()
@@ -70,46 +72,59 @@ public interface Cache<K, V> {
     public boolean isEmpty();
 
     /**
+     * Whether the cache contains the given key.
      * 
-     * @param o potential key
-     * @return whether argument is a key
+     * @param key potential key
+     * @return whether argument is a key in the cache.
+     * @throws NullPointerException if the key is null.
      * @see Map#containsKey(java.lang.Object) 
      */
-    public boolean containsKey(K o);
+    public boolean containsKey(K key);
 
     /**
-     * 
-     * @param o
-     * @return the value for the argument or {@code null}
-     * @see Map#get(java.lang.Object) 
+     * Gets an entry from the cache.
+     *
+     * @param key
+     * @return the value for the argument or {@code null} if not found.
+     * @throws NullPointerException if the key is null.
+     * @see javax.cache.Cache#get(java.lang.Object) 
      */
-    public V get(K o);
+    public V get(K key);
 
     /**
+     * Put a key-value pair into the cache.
      * 
-     * @param k
-     * @param v
+     * @param key
+     * @param value
+     * @throws NullPointerException if the key or value are null.
      * @see javax.cache.Cache#put(java.lang.Object, java.lang.Object)
      */
-    public void put(K k, V v);
+    public void put(K key, V value);
 
     /**
+     * Remove a key and its associated value from the cache, if present.
      * 
-     * @param o
+     * @param key
+     * @throws NullPointerException if the key is null.
      * @see javax.cache.Cache#remove(java.lang.Object) 
      */
-    public void remove(K o);
+    public void remove(K key);
 
     /**
+     * Remove all keys and values from the cache.
+     * 
      * @see Map#clear() 
      */
     public void clear();
 
     /**
+     * Get the value for a key from the cache, or the provided default
+     * if not found.
      * 
      * @param key
      * @param defaultValue
      * @return the value for the key or the default value if not found.
+     * @throws NullPointerException if the key is null.
      * @see Map#getOrDefault(java.lang.Object, java.lang.Object) 
      */
     public default V getOrDefault(K key, V defaultValue) {
@@ -123,19 +138,24 @@ public interface Cache<K, V> {
     }
 
     /**
+     * Put a key-value pair into the cache only if the key is not already defined.
      * 
      * @param key
      * @param value
-     * @return the previous value or {@code null}
+     * @return {@code true} if the value was set.
+     * @throws NullPointerException if the key or value are null.
      * @see javax.cache.Cache#putIfAbsent(java.lang.Object, java.lang.Object) 
      */
     public boolean putIfAbsent(K key, V value);
 
     /**
+     * Get the value associated with the key in the cache; if the value is not defined,
+     * run the function and use it as the new value.
      * 
      * @param key
      * @param mappingFunction
      * @return the result of the function or {@code null}
+     * @throws NullPointerException if the key or function are null.
      * @see Map#computeIfAbsent(java.lang.Object, java.util.function.Function) 
      */
     public default V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
@@ -150,10 +170,13 @@ public interface Cache<K, V> {
     }
 
     /**
+     * If the key is present in the cache, run the function to calculate a new value
+     * and return it.
      * 
      * @param key
      * @param remappingFunction
      * @return the result of the remapping function or {@code null}
+     * @throws NullPointerException if the key or function are null.
      * @see Map#computeIfPresent(java.lang.Object, java.util.function.BiFunction) 
      */
     public default V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
@@ -171,35 +194,32 @@ public interface Cache<K, V> {
     }
 
     /**
+     * Run the function with the current value of the key as an input,
+     * then cache the function's result for the key.
      * 
      * @param key
      * @param remappingFunction
-     * @return the result of running the function or {@code null}.
+     * @return the result of running the function.
+     * @throws NullPointerException if the key or function are null.
      * @see Map#compute(java.lang.Object, java.util.function.BiFunction)
      */
     public default V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
-        V value = get(key);
-        if (value == null) {
-            final V newValue = remappingFunction.apply(key, null);
-            if (newValue != null) {
-                put(key, newValue);
-            }
-            return newValue;
-        } else {
-            final V newValue = remappingFunction.apply(key, value);
-            if (newValue == null) {
-                remove(key);
-            } else {
-                put(key, newValue);
-            }
-            return newValue;
+        final V value = get(key);
+        final V newValue = remappingFunction.apply(key, null);
+        if (newValue != null) {
+            put(key, newValue);
+        } else if (value != null) {
+            remove(key);
         }
+        return newValue;
     }
 
     /**
+     * Get all values with keys in the set.
      * 
-     * @param set
+     * @param set - a set of keys
      * @return a map with all the keys and their non-null values
+     * @throws NullPointerException if the set is null.
      * @see javax.cache.Cache#getAll(java.util.Set) 
      */
     public default Map<K, V> getAll(Set<? extends K> set) {
@@ -214,17 +234,21 @@ public interface Cache<K, V> {
     }
 
     /**
+     * Get the previous value of a key and put a new value in its place.
      * 
-     * @param k
-     * @param v
+     * @param key
+     * @param value
      * @return the previous value of the key.
+     * @throws NullPointerException if the key or value are null.
      * @see javax.cache.Cache#getAndPut(java.lang.Object, java.lang.Object) 
      */
-    public V getAndPut(K k, V v);
+    public V getAndPut(K key, V value);
 
     /**
+     * Put all non-null keys and values in a map into the cache.
      * 
      * @param map 
+     * @throws NullPointerException if the map is null.
      * @see javax.cache.Cache#putAll(java.util.Map) 
      */
     public default void putAll(Map<? extends K, ? extends V> map) {
@@ -236,53 +260,67 @@ public interface Cache<K, V> {
     }
 
     /**
+     * Removes the mapping for a key only if currently mapped to the given value.
      * 
-     * @param k
-     * @param v
-     * @return 
+     * @param key
+     * @param value
+     * @return whether a value was removed.
+     * @throws NullPointerException if the key or value are null.
      * @see javax.cache.Cache#remove(java.lang.Object, java.lang.Object) 
      */
-    public boolean remove(K k, V v);
+    public boolean remove(K key, V value);
 
     /**
+     * Get the current mapping for a key, then remove it.
      * 
-     * @param k
-     * @return 
+     * @param key
+     * @return the previous mapping of the key.
+     * @throws NullPointerException if the key is null.
      * @see javax.cache.Cache#getAndRemove(java.lang.Object) 
      */
-    public V getAndRemove(K k);
+    public V getAndRemove(K key);
 
     /**
+     * Replace a key with a new value only if the current value matches the provided
+     * value.
      * 
-     * @param k
-     * @param v
-     * @param newv
+     * @param key      the key
+     * @param value    the current value
+     * @param newvalue the new value
      * @return 
+     * @throws NullPointerException if the key or either value are null.
      * @see javax.cache.Cache#replace(java.lang.Object, java.lang.Object, java.lang.Object) 
      */
-    public boolean replace(K k, V v, V newv);
+    public boolean replace(K key, V value, V newvalue);
 
     /**
+     * Replace a key with a new value only if the key is already defined in the cache.
      * 
-     * @param k
-     * @param v
-     * @return 
+     * @param key
+     * @param value
+     * @return whether the cache was modified.
+     * @throws NullPointerException if the key or value are null.
      * @see javax.cache.Cache#replace(java.lang.Object, java.lang.Object) 
      */
-    public boolean replace(K k, V v);
+    public boolean replace(K key, V value);
 
     /**
+     * Get the current value for a key and set it with a new value only if it is already
+     * defined in the cache.
      * 
-     * @param k
-     * @param v
-     * @return 
-     * @see javax.cache.Cache#getAndReplace(java.lang.Object) 
+     * @param key
+     * @param value
+     * @return the previous value or {@code null} if not defined.
+     * @throws NullPointerException if the key or value are null.
+     * @see javax.cache.Cache#getAndReplace(java.lang.Object, java.lang.Object)
      */
-    public V getAndReplace(K k, V v);
+    public V getAndReplace(K key, V value);
 
     /**
+     * Remove all keys in the set.
      * 
      * @param set
+     * @throws NullPointerException if the set is null.
      * @see javax.cache.Cache#removeAll(java.lang.Set) 
      */
     public default void removeAll(Set<? extends K> set) {
@@ -292,6 +330,8 @@ public interface Cache<K, V> {
     }
 
     /**
+     * Remove all keys in the cache.
+     * 
      * @see javax.cache.Cache#removeAll() 
      */
     public void removeAll();
@@ -306,10 +346,11 @@ public interface Cache<K, V> {
      *
      * @return collection of cache views
      */
-    public Collection<CacheView<K, V>> cacheViews();
+    public Iterable<CacheView<K, V>> cacheViews();
 
     /**
      * Remove all expired entries from the cache.
+     * This includes the least recently used items from the cache.
      *
      * If the implementation uses timers and threads to expire items, this
      * method may do nothing. If it removes objects lazily, this forces it to

@@ -1,11 +1,7 @@
 ## Implementation
 
-- Better algorithm for removing expired entries; see DefaultCache.
-
-- Better algorithm for removing least recently used entries, 
-  e.g. linked list between entries.
-
-- Deprecate/remove other implementations and move ThirdCache to DefaultCache.
+- Better algorithm for relocating least recently used entries, 
+  e.g. linked list between EntryRecord.
 
 ## Testing
 

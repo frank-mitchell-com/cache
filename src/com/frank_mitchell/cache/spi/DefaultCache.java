@@ -1,351 +1,646 @@
 /*
  * The MIT License
  *
- * Copyright 2023 Frank Mitchell.
+ * Copyright 2024 Frank Mitchell <me@frank-mitchell.com>.
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
  */
 package com.frank_mitchell.cache.spi;
 
 import com.frank_mitchell.cache.Cache;
+import com.frank_mitchell.cache.CacheParameters;
 import com.frank_mitchell.cache.CacheView;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.AbstractSet;
 import java.util.ArrayList;
-import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
 
 /**
- * A "default" implementation of the {@link Cache} interface.
+ * A cache implementation that makes all operations atomic (or as atomic as possible).
+ *
+ * @param <K> key type
+ * @param <V> value type
  *
  * @author Frank Mitchell
- *
- * @param <K> type of entries in the cache
- * @param <V> type of values in the cache
  */
-public class DefaultCache<K, V> extends AbstractCache<K, V> {
+public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
+
+    private static final Duration DEFAULT_DURATION = Duration.ofMillis(Long.MAX_VALUE);
 
     private final Clock _clock;
 
-    private final ConcurrentMap<K, CacheEntry<K, V>> _cache = new ConcurrentHashMap<>();
-    private final NavigableMap<Instant, Set<CacheEntry<K, V>>> _accessIndex = new TreeMap<>();
-    private final NavigableMap<Instant, Set<CacheEntry<K, V>>> _updateIndex = new TreeMap<>();
-    private final Lock _indexLock = new ReentrantLock(true);
+    private final class EntryRecord<K, V> {
+        private final K _key;
 
-    /**
-     * Default constructor
-     */
-    public DefaultCache() {
-        this(Clock.systemUTC());
+        private V _value;
+        private Instant _access;
+        private Instant _update;
+
+        EntryRecord(K key) {
+            final Instant now = _clock.instant();
+            _key = key;
+            _value = null;
+            _access = now;
+            _update = now;
+        }
+
+        public K getKey() {
+            return _key;
+        }
+
+        public V getValueWithAccess() {
+            V result;
+            synchronized (this) {
+                _access = _clock.instant();
+                result = _value;
+            }
+            return result;
+        }
+
+        public V getValue() {
+            V result;
+            synchronized (this) {
+                result = _value;
+            }
+            return result;
+        }
+
+        public void setValue(V v) {
+            Instant instant = _clock.instant();
+            synchronized (this) {
+                _value = v;
+                _access = instant;
+                _update = instant;
+            }
+        }
+
+        public Instant getAccess() {
+            Instant result;
+            synchronized (this) {
+                result = _access;
+            }
+            return result;
+        }
+
+        public Instant getUpdate() {
+            Instant result;
+            synchronized (this) {
+                result = _update;
+           }
+            return result;
+        }
+        
+        public void markForDeletion() {
+            synchronized (this) {
+                _value = null;
+            }
+        }
+        
+        public boolean isDeleted() {
+            synchronized (this) {
+                return (_value == null);
+            }
+        }
     }
 
-    /**
-     * Debug constructor for a (mock) Clock.
-     *
-     * @param clock an adjustable clock for fast unit tests.
-     */
+    private final ReadWriteLock _indexLock = new ReentrantReadWriteLock(true);
+    private final Map<K, EntryRecord<K, V>> _cache = new HashMap<>();
+    private final Queue<EntryRecord<K,V>> _lruQueue = new LinkedList<>();
+    private final NavigableMap<Instant, Set<EntryRecord<K,V>>> _expiryIndex = new TreeMap<>();
+
+    private final Lock _keyLock = new ReentrantLock(true);
+    private final Condition _keyNotInSet = _keyLock.newCondition();
+    private final Set<K> _keySet = new ConcurrentHashSet<>();
+
+    protected volatile boolean _disabled = false;
+    protected Duration _lastUpdateLimit = DEFAULT_DURATION;
+    protected int _maxSize = Integer.MAX_VALUE;
+
+    public DefaultCache() {
+        _clock = Clock.systemUTC();
+    }
+
     public DefaultCache(Clock clock) {
         _clock = clock;
     }
 
-    @Override
-    protected Clock getClock() {
-        return _clock;
-    }
-    
-    @Override
-    public int size() {
-        return _cache.size();
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return _cache.isEmpty();
-    }
-
-    @Override
-    @SuppressWarnings("element-type-mismatch")
-    public boolean containsKey(Object o) {
-        clearExpired();
-        return _cache.containsKey(o);
-    }
-
-    @Override
-    public V get(K key) {
-        V result = null;
-        clearExpired();
-        CacheEntry<K, V> entry = rawget(key);
-        if (entry != null) {
-            result = entry.getValueWithAccess();
+    private void lockKey(K key) {
+        _keyLock.lock();
+        try {
+            while (_keySet.contains(key)) {
+                _keyNotInSet.awaitUninterruptibly();
+            }
+            _keySet.add(key);
+        } finally {
+            _keyLock.unlock();
         }
-        return result;
     }
 
-    @Override
-    protected CacheEntry<K, V> rawget(K key) {
-        Objects.requireNonNull(key);
-        return _cache.get(key);
-    }
-
-    @Override
-    protected boolean rawput(K key, V value) {
-        Objects.requireNonNull(key);
-        Objects.requireNonNull(value);
-
-        clearExpired();
-        CacheEntry<K, V> entry = _cache.get((K) key);
-        if (entry == null) {
-            entry = new CacheEntry<>(this, key, value);
-            entryCreated(entry);
-            _cache.put(key, entry);
-            return true;
-        } else {
-            entry.setValue(value);
-            return false;
+    private void unlockKey(K key) {
+        _keyLock.lock();
+        try {
+            _keySet.remove(key);
+            _keyNotInSet.signalAll();
+        } finally {
+            _keyLock.unlock();
         }
     }
 
     @Override
-    public void remove(K key) {
-        Objects.requireNonNull(key);
-
-        clearExpired();
-        CacheEntry<K, V> entry = rawget(key);
-        if (entry != null) {
-            rawremove(key);
-            entryDeleted(entry);
+    public Iterable<CacheView<K,V>> cacheViews() {
+        List<CacheView<K, V>> result = new ArrayList<>(size());
+        _indexLock.readLock().lock();
+        try {
+            for (EntryRecord<K, V> e : _cache.values()) {
+                lockKey(e.getKey());
+                try {
+                    result.add(new SimpleCacheView<>(
+                                e.getKey(),
+                                e.getValue(),
+                                e.getAccess(),
+                                e.getUpdate()));
+                } finally {
+                    unlockKey(e.getKey());
+                }
+            }
+        } finally {
+            _indexLock.readLock().unlock();
         }
-    }
-
-    @Override
-    protected boolean rawremove(K key) {
-        return _cache.remove(key) != null;
-    }
-
-    @Override
-    public Collection<CacheView<K, V>> cacheViews() {
-        ArrayList<CacheView<K, V>> result = new ArrayList<>(_cache.size());
-        clearExpired();
-        _cache.forEach((K key, CacheEntry<K, V> e) -> {
-            result.add(new SimpleCacheView<>(e));
-        });
         return result;
     }
 
     @Override
     public void clear() {
-        _cache.clear();
-
-        _indexLock.lock();
+        _indexLock.writeLock().lock();
         try {
-            _accessIndex.clear();
-            _updateIndex.clear();
+            _cache.clear();
         } finally {
-            _indexLock.unlock();
+            _indexLock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public boolean containsKey(K k) {
+        _indexLock.readLock().lock();
+        try {
+            return _cache.containsKey(k);
+        } finally {
+            _indexLock.readLock().unlock();
+        }
+    }
+
+    private EntryRecord<K, V> beginWith(K key, boolean create) {
+        if (isDisabled()) {
+            return null;
+        }
+        clearExpired();
+
+        _indexLock.readLock().lock();
+        lockKey(key);
+
+        try {
+            EntryRecord<K, V> entry = _cache.get(key);
+            if (entry == null && create) {
+                _indexLock.readLock().unlock();
+                _indexLock.writeLock().lock();
+                try {
+                    entry = new EntryRecord<>(key);
+                    entryCreated(entry);
+                    _cache.put(key, entry);
+                } finally {
+                    _indexLock.writeLock().unlock();
+                    _indexLock.readLock().lock();
+                }
+            }
+            return entry;
+        } finally {
+            _indexLock.readLock().unlock();
+        }
+    }
+
+    private V accessValue(EntryRecord<K, V> e) {
+        V value = e.getValueWithAccess();
+        entryAccessed(e);
+        return value;
+    }
+
+    private void putInWith(EntryRecord<K, V> e, V value) {
+        Instant oldtime = e.getUpdate();
+        e.setValue(value);
+        entryUpdated(e, oldtime);
+    }
+
+    private void removeInWith(EntryRecord<K,V> e) {
+        if (e == null) {
+            return;
+        }
+        if (deleteEntryFromCache(e.getKey(), e)) {
+            entryDeleted(e);
+        }
+    }
+
+    private boolean deleteEntryFromCache(final K key, final EntryRecord<K, V> e) {
+        return _cache.remove(key, e);
+    }
+
+    private void endWith(K key) {
+        unlockKey(key);
+    }
+
+    private void with(K key, boolean create, Consumer<EntryRecord<K,V>> func) {
+        try {
+            EntryRecord<K,V> entry = beginWith(key, create);
+            if (entry == null) {
+                return;
+            }
+            func.accept(entry);
+        } finally {
+            endWith(key);
+        }
+    }
+
+    private boolean withBoolean(K key, boolean create, Predicate<EntryRecord<K,V>> func) {
+        try {
+            EntryRecord<K,V> entry = beginWith(key, create);
+            if (entry == null) {
+                return false;
+            }
+            return func.test(entry);
+        } finally {
+            endWith(key);
+        }
+    }
+
+    private V withValue(K key, boolean create, Function<EntryRecord<K,V>, V> func) {
+        try {
+            EntryRecord<K,V> entry = beginWith(key, create);
+            if (entry == null) {
+                return null;
+            }
+            return func.apply(entry);
+        } finally {
+            endWith(key);
+        }
+    }
+
+    @Override
+    public V get(K key) {
+        Objects.requireNonNull(key);
+        return withValue(key, false, (EntryRecord<K, V> e) -> accessValue(e));
+    }
+
+    @Override
+    public V getAndPut(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        return withValue(key, true, (EntryRecord<K, V> e) -> {
+            final V oldvalue = e.getValue();
+            putInWith(e, value);
+            return oldvalue;
+        });
+    }
+
+    @Override
+    public V getAndRemove(K key) {
+        Objects.requireNonNull(key);
+        return withValue(key, false, (EntryRecord<K, V> e) -> {
+            V oldvalue = e.getValue();
+            removeInWith(e);
+            return oldvalue;
+        });
+    }
+
+    @Override
+    public V getAndReplace(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        return withValue(key, false, (EntryRecord<K, V> e) -> {
+            V oldvalue = e.getValue();
+            putInWith(e, value);
+            return oldvalue;
+        });
+    }
+
+    @Override
+    public void put(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        with(key, true, (EntryRecord<K, V> e) -> { putInWith(e, value); });
+    }
+
+    @Override
+    public boolean putIfAbsent(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        return withBoolean(key, true, (EntryRecord<K, V> e) -> {
+            if (e.getValue() == null) {
+                putInWith(e, value);
+                return true;
+            }
+            return false;
+        });
+    }
+
+    @Override
+    public void remove(K key) {
+        Objects.requireNonNull(key);
+        with(key, false, (EntryRecord<K, V> e) -> { removeInWith(e); });
+    }
+
+    @Override
+    public boolean remove(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        return withBoolean(key, false, (EntryRecord<K, V> e) -> {
+            final V oldvalue = e.getValue();
+            if (value.equals(oldvalue)) {
+                removeInWith(e);
+                return true;
+            }
+            return false;
+        });
+    }
+
+    @Override
+    public void removeAll() {
+        clear();
+    }
+
+    @Override
+    public boolean replace(K key, V value, V newvalue) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        Objects.requireNonNull(newvalue);
+        return withBoolean(key, false, (EntryRecord<K, V> e) -> {
+            if (value.equals(e.getValue())) {
+                putInWith(e, newvalue);
+                return true;
+            }
+            return false;
+        });
+    }
+
+    @Override
+    public boolean replace(K key, V value) {
+        Objects.requireNonNull(key);
+        Objects.requireNonNull(value);
+        return withBoolean(key, false, (EntryRecord<K, V> e) -> {
+            putInWith(e, value);
+            return true;
+        });
+    }
+
+    @Override
+    public int size() {
+        clearExpired();
+        _indexLock.readLock().lock();
+        try {
+            return _cache.size();
+        } finally {
+            _indexLock.readLock().unlock();
+        }
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return size() == 0;
+    }
+
+    private void insertIntoLruQueue(EntryRecord<K, V> entry) {
+        _lruQueue.add(entry);
+    }
+
+    private void updateLruQueue(EntryRecord<K, V> entry) {
+        deleteFromLruQueue(entry);
+        insertIntoLruQueue(entry);
+    }
+
+    private void deleteFromLruQueue(EntryRecord<K, V> entry) {
+        _lruQueue.remove(entry);
+    }
+
+    private void indexUpdate(EntryRecord<K, V> entry, Instant oldtime, Instant newtime) {
+        if (oldtime != null) {
+            Set<EntryRecord<K, V>> set = _expiryIndex.get(oldtime);
+            if (set != null) {
+                set.remove(entry);
+                if (set.isEmpty()) {
+                    _expiryIndex.remove(oldtime);
+                }
+            }
+        }
+        if (newtime != null) {
+            Set<EntryRecord<K, V>> set =_expiryIndex.computeIfAbsent(newtime,
+                                            (Instant i) -> new ConcurrentHashSet<>() );
+            set.add(entry);
+        }
+    }
+
+    void entryCreated(EntryRecord<K, V> entry) {
+        _indexLock.writeLock().lock();
+        try {
+            insertIntoLruQueue(entry);
+            indexUpdate(entry, null, entry.getUpdate());
+        } finally {
+            _indexLock.writeLock().unlock();
+        }
+    }
+
+    void entryAccessed(EntryRecord<K, V> entry) {
+        _indexLock.writeLock().lock();
+        try {
+            updateLruQueue(entry);
+        } finally {
+            _indexLock.writeLock().unlock();
+        }
+    }
+
+    void entryUpdated(EntryRecord<K, V> entry, Instant oldtime) {
+        _indexLock.writeLock().lock();
+        try {
+            indexUpdate(entry, oldtime, entry.getUpdate());
+            updateLruQueue(entry);
+        } finally {
+            _indexLock.writeLock().unlock();
+        }
+    }
+
+    void entryDeleted(EntryRecord<K, V> entry) {
+        _indexLock.writeLock().lock();
+        try {
+            deleteFromLruQueue(entry);
+            indexUpdate(entry, entry.getUpdate(), null);
+        } finally {
+            _indexLock.writeLock().unlock();
         }
     }
 
     @Override
     public void clearExpired() {
-        ArrayList<Instant> accessCleanup = new ArrayList<>();
-        ArrayList<Instant> updateCleanup = new ArrayList<>();
-
-        _indexLock.lock();
-        try {
-            // crawl through updates, deleting entries until we hit the minimums
-            removeIfPastExpiry(_updateIndex, getLastUpdateLimit(), accessCleanup, updateCleanup);
-
-            // if we're still over the maximum size, start throwing out old stuff
-            // based on whether we throw out old updates or least recently accessed.
-            removeOldest(_accessIndex, accessCleanup, updateCleanup);
-
-            // Clean up deleted entries from both indexes.
-            removeOrphanKeys(_accessIndex, accessCleanup);
-            removeOrphanKeys(_updateIndex, updateCleanup);
-        } finally {
-            _indexLock.unlock();
-        }
-    }
-
-    private void removeOrphanKeys(Map<Instant, Set<CacheEntry<K, V>>> index,
-            Collection<Instant> cleanup) {
-        for (Instant inst : cleanup) {
-            Set<CacheEntry<K, V>> entryset = index.get(inst);
-
-            if (entryset == null) {
-                continue;
-            }
-
-            Iterator<CacheEntry<K, V>> entryiter = entryset.iterator();
-            while (entryiter.hasNext()) {
-                CacheEntry<K, V> e = entryiter.next();
-                if (!_cache.containsKey(e.getKey())) {
-                    entryiter.remove();
-                }
-            }
-            if (entryset.isEmpty()) {
-                index.remove(inst);
-            }
-        }
-    }
-
-    private void removeOldest(NavigableMap<Instant, Set<CacheEntry<K, V>>> index,
-            Collection<Instant> accesses,
-            Collection<Instant> updates) {
-        while (getMaximumSize() < size()) {
-            Map.Entry<Instant, Set<CacheEntry<K, V>>> first = index.firstEntry();
-            for (CacheEntry<K, V> e : first.getValue()) {
-                CacheEntry<K, V> d = _cache.remove(e.getKey());
-                accesses.add(d.getAccess());
-                updates.add(d.getUpdate());
-            }
-            index.remove(first.getKey());
-        }
-    }
-
-    private void removeIfPastExpiry(final NavigableMap<Instant, Set<CacheEntry<K, V>>> index,
-            Duration limit,
-            Collection<Instant> accesses,
-            Collection<Instant> updates) {
-        // crawl through each "list", deleting entries until we hit the minimums
+        Set<EntryRecord<K, V>> deleted = new HashSet<>();
         Instant now = _clock.instant();
-        Iterator<Map.Entry<Instant, Set<CacheEntry<K, V>>>> iter = index.entrySet().iterator();
-        while (iter.hasNext()) {
-            Map.Entry<Instant, Set<CacheEntry<K, V>>> entry = iter.next();
-            Instant expiry = entry.getKey().plus(limit);
-            if (expiry.isBefore(now)) {
-                for (CacheEntry<K, V> e : entry.getValue()) {
-                    CacheEntry<K, V> d = _cache.remove(e.getKey());
-                    accesses.add(d.getAccess());
-                    updates.add(d.getUpdate());
+        _indexLock.readLock().lock();
+        try {
+            /* Remove expired entries */
+            for (Map.Entry<Instant, Set<EntryRecord<K, V>>> bucket : _expiryIndex.entrySet()) {
+                final Instant updated = bucket.getKey();
+                final Instant expiry = updated.plus(getLastUpdateLimit());
+                if (expiry.isBefore(now)) {
+                    final Iterator<EntryRecord<K,V>> iter = bucket.getValue().iterator();
+                    while (iter.hasNext()) {
+                        final EntryRecord<K, V> e = iter.next();
+                        final K key = e.getKey();
+                        lockKey(key);
+                        try {
+                            // Make sure entry hasn't been updated
+                            if (updated.equals(e.getUpdate())) {
+                                e.markForDeletion();
+                                deleted.add(e);
+                            }
+                        } finally {
+                            unlockKey(key);
+                        }
+                    }
+                } else {
+                    break;
                 }
-                iter.remove();
-            } else {
-                // Past "now", so no more to expire
-                break;
             }
+
+            /* Remove least recently used entries */
+            final int removecount = _cache.size() - deleted.size() - getMaximumSize();
+            for (int i = 0; i < removecount; i++) {
+                EntryRecord<K, V> e = _lruQueue.peek();
+                final K key = e.getKey();
+                final Instant accessed = e.getAccess();
+                lockKey(key);
+                try {
+                    // Make sure entry hasn't been "accessed"
+                    if (accessed.equals(e.getAccess())) {
+                        e.markForDeletion();
+                        deleted.add(e);
+                    }
+                } finally {
+                    unlockKey(key);
+                }
+            }
+        } finally {
+            _indexLock.readLock().unlock();
+        }
+        
+        _indexLock.writeLock().lock();
+        try {
+            for (EntryRecord<K, V> e : deleted) {
+                if (e.isDeleted() && _cache.remove(e.getKey(), e)) {
+                    entryDeleted(e);
+                }
+            }
+        } finally {
+            _indexLock.writeLock().unlock();
         }
     }
 
     @Override
-    protected void entryAccessed(CacheEntry<K, V> entry, Instant old) {
-        _indexLock.lock();
+    public CacheParameters getParameters() {
+        return this;
+    }
+
+    @Override
+    public boolean isDisabled() {
+        _indexLock.readLock().lock();
         try {
-            updateIndex(_accessIndex, entry, old, entry.getAccess());
+            return _disabled;
         } finally {
-            _indexLock.unlock();
+            _indexLock.readLock().unlock();
         }
     }
 
     @Override
-    protected void entryUpdated(CacheEntry<K, V> entry, Instant old) {
-        _indexLock.lock();
+    public void setDisabled(boolean disabled) {
+        _indexLock.writeLock().lock();
         try {
-            updateIndex(_updateIndex, entry, old, entry.getUpdate());
-        } finally {
-            _indexLock.unlock();
-        }
-    }
-
-    void entryCreated(CacheEntry<K, V> entry) {
-        _indexLock.lock();
-        try {
-            updateIndex(_accessIndex, entry, null, entry.getAccess());
-            updateIndex(_updateIndex, entry, null, entry.getUpdate());
-        } finally {
-            _indexLock.unlock();
-        }
-    }
-
-    void entryDeleted(CacheEntry<K, V> entry) {
-        _indexLock.lock();
-        try {
-            updateIndex(_accessIndex, entry, entry.getAccess(), null);
-            updateIndex(_updateIndex, entry, entry.getUpdate(), null);
-        } finally {
-            _indexLock.unlock();
-        }
-    }
-
-    private void updateIndex(
-            final NavigableMap<Instant, Set<CacheEntry<K, V>>> index,
-            final CacheEntry<K, V> entry,
-            final Instant oldtime,
-            final Instant newtime) {
-        if (entry == null || index == null) {
-            return;
-        }
-        // 1. remove the exact entry at `oldtime` (if not null and present)
-        if (oldtime != null) {
-            Set<CacheEntry<K, V>> entries = index.get(oldtime);
-            if (entries != null) {
-                entries.remove(entry);
-                if (entries.isEmpty()) {
-                    index.remove(oldtime);
-                }
+            _disabled = disabled;
+            if (disabled) {
+                clear();
             }
-        }
-        // 2. re-add it to `index` at `newtime` (if not null)
-        if (newtime != null) {
-            Set<CacheEntry<K, V>> entries = index.get(newtime);
-            if (entries == null) {
-                entries = new ConcurrentHashSet<>();
-                index.put(newtime, entries);
-            }
-            entries.add(entry);
+        } finally {
+            _indexLock.writeLock().unlock();
         }
     }
 
-    private static class ConcurrentHashSet<K> extends AbstractSet<K> {
-
-        ConcurrentHashMap<K, Boolean> _map = new ConcurrentHashMap<>();
-
-        @Override
-        public boolean add(K e) {
-            return (_map.put(e, Boolean.TRUE) == null);
+    @Override
+    public Duration getLastUpdateLimit() {
+        _indexLock.readLock().lock();
+        try {
+            return _lastUpdateLimit;
+        } finally {
+            _indexLock.readLock().unlock();
         }
+    }
 
-        @Override
-        public Iterator<K> iterator() {
-            return _map.keySet().iterator();
+    @Override
+    public void setLastUpdateLimit(Duration value) {
+        _indexLock.writeLock().lock();
+        try {
+            _lastUpdateLimit = (value != null) ? value : DEFAULT_DURATION;
+            clearExpired();
+        } finally {
+            _indexLock.writeLock().unlock();
         }
+    }
 
-        @Override
-        @SuppressWarnings("element-type-mismatch")
-        public boolean remove(Object o) {
-            return (_map.remove(o) != null);
+    @Override
+    public int getMaximumSize() {
+        _indexLock.readLock().lock();
+        try {
+            return _maxSize;
+        } finally {
+            _indexLock.readLock().unlock();
         }
+    }
 
-        @Override
-        public int size() {
-            return _map.size();
+    @Override
+    public void setMaximumSize(int value) {
+        _indexLock.writeLock().lock();
+        try {
+            _maxSize = value;
+            clearExpired();
+        } finally {
+            _indexLock.writeLock().unlock();
         }
     }
 }
