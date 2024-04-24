@@ -46,9 +46,14 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.IntConsumer;
+import java.util.function.IntSupplier;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * A cache implementation that makes all operations atomic (or as atomic as possible).
@@ -180,6 +185,87 @@ public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
             _keyLock.unlock();
         }
     }
+    
+    private <R> R syncRead(Supplier<R> p) {
+        _indexLock.readLock().lock();
+        try {
+            return p.get();
+        } finally {
+            _indexLock.readLock().unlock();
+        }
+    }
+
+    private boolean syncReadBoolean(BooleanSupplier p) {
+        _indexLock.readLock().lock();
+        try {
+            return p.getAsBoolean();
+        } finally {
+            _indexLock.readLock().unlock();
+        }
+    }
+
+    private <T> boolean syncReadBoolean(T t, Predicate<T> p) {
+        _indexLock.readLock().lock();
+        try {
+            return p.test(t);
+        } finally {
+            _indexLock.readLock().unlock();
+        }
+    }
+
+    private int syncReadInt(IntSupplier p) {
+        _indexLock.readLock().lock();
+        try {
+            return p.getAsInt();
+        } finally {
+            _indexLock.readLock().unlock();
+        }
+    }
+
+    private <T> void syncWrite(Consumer<T> p) {
+        _indexLock.writeLock().lock();
+        try {
+            p.accept(null);
+        } finally {
+            _indexLock.writeLock().unlock();
+        }
+    }
+
+    private void syncWriteInt(int t, IntConsumer p) {
+        _indexLock.writeLock().lock();
+        try {
+            p.accept(t);
+        } finally {
+            _indexLock.writeLock().unlock();
+        }
+    }
+
+    private void syncWriteBoolean(boolean t, Consumer<Boolean> p) {
+        _indexLock.writeLock().lock();
+        try {
+            p.accept(t);
+        } finally {
+            _indexLock.writeLock().unlock();
+        }
+    }
+
+    private <T> void syncWrite(T t, Consumer<T> p) {
+        _indexLock.writeLock().lock();
+        try {
+            p.accept(t);
+        } finally {
+            _indexLock.writeLock().unlock();
+        }
+    }
+
+    private <T, U> void syncWrite(T t, U u, BiConsumer<T, U> p) {
+        _indexLock.writeLock().lock();
+        try {
+            p.accept(t, u);
+        } finally {
+            _indexLock.writeLock().unlock();
+        }
+    }
 
     @Override
     public Iterable<CacheView<K,V>> cacheViews() {
@@ -206,22 +292,14 @@ public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
 
     @Override
     public void clear() {
-        _indexLock.writeLock().lock();
-        try {
+        syncWrite((Object o) -> {
             _cache.clear();
-        } finally {
-            _indexLock.writeLock().unlock();
-        }
+        });
     }
 
     @Override
-    public boolean containsKey(K k) {
-        _indexLock.readLock().lock();
-        try {
-            return _cache.containsKey(k);
-        } finally {
-            _indexLock.readLock().unlock();
-        }
+    public boolean containsKey(K key) {
+        return syncReadBoolean(key, (K k) -> _cache.containsKey(k));
     }
 
     private EntryRecord<K, V> beginWith(K key, boolean create) {
@@ -428,12 +506,7 @@ public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
     @Override
     public int size() {
         clearExpired();
-        _indexLock.readLock().lock();
-        try {
-            return _cache.size();
-        } finally {
-            _indexLock.readLock().unlock();
-        }
+        return syncReadInt(() -> _cache.size());
     }
 
     @Override
@@ -471,43 +544,31 @@ public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
         }
     }
 
-    void entryCreated(EntryRecord<K, V> entry) {
-        _indexLock.writeLock().lock();
-        try {
+    void entryCreated(EntryRecord<K, V> e) {
+        syncWrite(e, (EntryRecord<K, V> entry) -> {
             insertIntoLruQueue(entry);
             indexUpdate(entry, null, entry.getUpdate());
-        } finally {
-            _indexLock.writeLock().unlock();
-        }
+        });
     }
 
-    void entryAccessed(EntryRecord<K, V> entry) {
-        _indexLock.writeLock().lock();
-        try {
+    void entryAccessed(EntryRecord<K, V> e) {
+        syncWrite(e, (EntryRecord<K, V> entry) -> {
             updateLruQueue(entry);
-        } finally {
-            _indexLock.writeLock().unlock();
-        }
+        });
     }
 
     void entryUpdated(EntryRecord<K, V> entry, Instant oldtime) {
-        _indexLock.writeLock().lock();
-        try {
-            indexUpdate(entry, oldtime, entry.getUpdate());
-            updateLruQueue(entry);
-        } finally {
-            _indexLock.writeLock().unlock();
-        }
+        syncWrite(entry, oldtime, (EntryRecord<K, V> e, Instant t) -> {
+            indexUpdate(e, t, e.getUpdate());
+            updateLruQueue(e);
+        });
     }
 
     void entryDeleted(EntryRecord<K, V> entry) {
-        _indexLock.writeLock().lock();
-        try {
-            deleteFromLruQueue(entry);
-            indexUpdate(entry, entry.getUpdate(), null);
-        } finally {
-            _indexLock.writeLock().unlock();
-        }
+        syncWrite(entry, (EntryRecord<K, V> e) -> {
+            deleteFromLruQueue(e);
+            indexUpdate(e, e.getUpdate(), null);
+        });
     }
 
     @Override
@@ -581,66 +642,42 @@ public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
 
     @Override
     public boolean isDisabled() {
-        _indexLock.readLock().lock();
-        try {
-            return _disabled;
-        } finally {
-            _indexLock.readLock().unlock();
-        }
+        return syncReadBoolean(() -> _disabled);
     }
 
     @Override
-    public void setDisabled(boolean disabled) {
-        _indexLock.writeLock().lock();
-        try {
+    public void setDisabled(boolean value) {
+        syncWriteBoolean(value, (Boolean disabled) -> {
             _disabled = disabled;
             if (disabled) {
                 clear();
             }
-        } finally {
-            _indexLock.writeLock().unlock();
-        }
+        });
     }
 
     @Override
     public Duration getLastUpdateLimit() {
-        _indexLock.readLock().lock();
-        try {
-            return _lastUpdateLimit;
-        } finally {
-            _indexLock.readLock().unlock();
-        }
+        return syncRead(() -> _lastUpdateLimit);
     }
 
     @Override
     public void setLastUpdateLimit(Duration value) {
-        _indexLock.writeLock().lock();
-        try {
-            _lastUpdateLimit = (value != null) ? value : DEFAULT_DURATION;
+        syncWrite(value, (Duration d) -> {
+            _lastUpdateLimit = (d != null) ? d : DEFAULT_DURATION;
             clearExpired();
-        } finally {
-            _indexLock.writeLock().unlock();
-        }
+        });
     }
 
     @Override
     public int getMaximumSize() {
-        _indexLock.readLock().lock();
-        try {
-            return _maxSize;
-        } finally {
-            _indexLock.readLock().unlock();
-        }
+        return syncReadInt(() -> _maxSize);
     }
 
     @Override
     public void setMaximumSize(int value) {
-        _indexLock.writeLock().lock();
-        try {
-            _maxSize = value;
+        syncWriteInt(value, (int i) -> {
+            _maxSize = i;
             clearExpired();
-        } finally {
-            _indexLock.writeLock().unlock();
-        }
+        });
     }
 }
