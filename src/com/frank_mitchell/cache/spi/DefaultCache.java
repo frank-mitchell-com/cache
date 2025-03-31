@@ -69,14 +69,14 @@ public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
 
     private final Clock _clock;
 
-    private final class EntryRecord<K, V> {
-        private final K _key;
+    private final class EntryRecord<K2, V2> {
+        private final K2 _key;
 
-        private V _value;
+        private V2 _value;
         private Instant _access;
         private Instant _update;
 
-        EntryRecord(K key) {
+        EntryRecord(K2 key) {
             final Instant now = _clock.instant();
             _key = key;
             _value = null;
@@ -84,12 +84,12 @@ public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
             _update = now;
         }
 
-        public K getKey() {
+        public K2 getKey() {
             return _key;
         }
 
-        public V getValueWithAccess() {
-            V result;
+        public V2 getValueWithAccess() {
+            V2 result;
             synchronized (this) {
                 _access = _clock.instant();
                 result = _value;
@@ -97,15 +97,15 @@ public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
             return result;
         }
 
-        public V getValue() {
-            V result;
+        public V2 getValue() {
+            V2 result;
             synchronized (this) {
                 result = _value;
             }
             return result;
         }
 
-        public void setValue(V v) {
+        public void setValue(V2 v) {
             Instant instant = _clock.instant();
             synchronized (this) {
                 _value = v;
@@ -292,7 +292,7 @@ public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
 
     @Override
     public void clear() {
-        syncWrite((Object o) -> {
+        syncWrite((@SuppressWarnings("unused") Object o) -> {
             _cache.clear();
         });
     }
@@ -538,8 +538,9 @@ public final class DefaultCache<K, V> implements Cache<K, V>, CacheParameters {
             }
         }
         if (newtime != null) {
-            Set<EntryRecord<K, V>> set =_expiryIndex.computeIfAbsent(newtime,
-                                            (Instant i) -> new ConcurrentHashSet<>() );
+            Set<EntryRecord<K, V>> set =
+                _expiryIndex.computeIfAbsent(newtime, 
+                    (@SuppressWarnings("unused") Instant i) -> new ConcurrentHashSet<>() );
             set.add(entry);
         }
     }
